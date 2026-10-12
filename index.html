@@ -1,0 +1,616 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IMU-DXL · 舵机总线调试台</title>
+<style>
+:root{--bg:#f3f6fa;--card:#fff;--line:#e4e9f0;--text:#152033;--muted:#6b778a;--cyan:#0891b2;--blue:#2563eb;--rose:#e11d48;--green:#16a34a;--red:#dc2626;--mono:ui-monospace,Consolas,monospace}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}
+.app{max-width:1240px;margin:auto;padding:22px}
+.top,.card{background:var(--card);border:1px solid var(--line);border-radius:15px}
+.top{padding:15px 18px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.brand h1{font-size:18px;margin:0}
+.brand p{font:12px var(--mono);color:var(--muted);margin:4px 0 0}
+.controls{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+button,select,input{font:14px inherit;border-radius:9px;padding:9px 13px}
+button{border:0;background:var(--cyan);color:#fff;font-weight:650;cursor:pointer}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.disconnect{background:var(--red)}
+select,input[type=number]{background:#fff;border:1px solid var(--line);color:var(--text)}
+label.opt{display:flex;align-items:center;gap:6px;font:12px var(--mono);color:var(--muted)}
+.status{font:12px var(--mono);padding:8px 11px;border:1px solid var(--line);border-radius:999px;color:var(--muted);white-space:nowrap}
+.status::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:#9ca3af;margin-right:7px}
+.status.live{color:#166534;background:#f0fdf4;border-color:#bbf7d0}
+.status.live::before{background:var(--green)}
+.status.bad{color:#991b1b;background:#fef2f2;border-color:#fecaca}
+.status.bad::before{background:var(--red)}
+.grid{display:grid;grid-template-columns:minmax(310px,1fr) 1.45fr;gap:17px;margin-top:17px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{overflow:hidden}
+.head{padding:13px 16px;border-bottom:1px solid #f0f2f6;display:flex;justify-content:space-between;align-items:center}
+.head h2{font-size:12px;letter-spacing:.13em;color:var(--muted);margin:0}
+.badge{font:12px var(--mono);color:var(--cyan)}
+canvas{display:block;width:100%}
+#scene{aspect-ratio:1.05;background:linear-gradient(#fbfdff,#f3f7fb)}
+#chart{height:390px}
+.legend{padding:10px 15px;border-top:1px solid #f0f2f6;display:flex;gap:14px;font:12px var(--mono);color:var(--muted);flex-wrap:wrap}
+.dot{width:9px;height:9px;border-radius:3px;display:inline-block;margin-right:5px}
+.values{margin-top:17px;background:var(--card);border:1px solid var(--line);border-radius:15px;padding:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:13px}
+.value{border:1px solid #eef1f6;border-radius:11px;padding:10px 12px}
+.value label{font:11px var(--mono);letter-spacing:.1em;color:var(--muted);display:block;margin-bottom:6px}
+.num{font:600 22px var(--mono)}
+.num small{font-size:11px;color:var(--muted);font-weight:400}
+.num.r{color:var(--cyan)}.num.p{color:var(--blue)}.num.y{color:var(--rose)}
+.log{margin-top:15px;background:#101a29;color:#c7d3e3;border-radius:15px;padding:13px 15px;height:190px;overflow:auto;font:12px/1.6 var(--mono)}
+.log div{white-space:pre-wrap;word-break:break-all}
+.hint{font:12px/1.7 var(--mono);color:var(--muted);margin:13px 2px 0}
+.warnbar{margin-top:13px;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;border-radius:11px;padding:11px 13px;font:12px/1.7 var(--mono)}
+</style>
+</head>
+<body><div class="app">
+<header class="top">
+  <div class="brand"><h1>IMU-DXL · 舵机总线调试台</h1><p id="busline">ID 200 · 1 Mbps 8N1 · 单线半双工 TTL</p></div>
+  <div class="controls">
+    <span id="status" class="status">未连接</span>
+    <select id="proto" title="总线协议">
+      <option value="feetech" selected>飞特 SCS/STS</option>
+      <option value="dxl">DYNAMIXEL 2.0</option>
+    </select>
+    <select id="rate" title="总线查询频率">
+      <option value="500">2 Hz</option>
+      <option value="100">10 Hz</option>
+      <option value="50" selected>20 Hz</option>
+      <option value="20">50 Hz</option>
+    </select>
+    <button id="connect">连接串口</button>
+  </div>
+</header>
+
+<main class="grid">
+  <section class="card">
+    <div class="head"><h2>三维姿态</h2><span id="heading" class="badge">N 000°</span></div>
+    <canvas id="scene"></canvas>
+    <div class="legend">
+      <span><i class="dot" style="background:var(--cyan)"></i>Roll</span>
+      <span><i class="dot" style="background:var(--blue)"></i>Pitch</span>
+      <span><i class="dot" style="background:var(--rose)"></i>Yaw</span>
+    </div>
+  </section>
+  <section class="card">
+    <div class="head"><h2>最近 10 秒姿态曲线</h2><span id="fps" class="badge">0.0 帧/秒</span></div>
+    <canvas id="chart"></canvas>
+  </section>
+</main>
+
+<section class="values">
+  <div class="value"><label>ROLL</label><div class="num r"><span id="roll">0.00</span><small> °</small></div></div>
+  <div class="value"><label>PITCH</label><div class="num p"><span id="pitch">0.00</span><small> °</small></div></div>
+  <div class="value"><label>YAW</label><div class="num y"><span id="yaw">0.00</span><small> °</small></div></div>
+  <div class="value"><label>GYRO X</label><div class="num"><span id="gx">0.00</span><small> °/s</small></div></div>
+  <div class="value"><label>GYRO Y</label><div class="num"><span id="gy">0.00</span><small> °/s</small></div></div>
+  <div class="value"><label>GYRO Z</label><div class="num"><span id="gz">0.00</span><small> °/s</small></div></div>
+  <div class="value"><label>QUATERNION WXYZ</label><div id="quat" class="num" style="font-size:14px">1, 0, 0, 0</div></div>
+  <div class="value"><label>采样序号 / 状态</label><div class="num"><span id="seq">—</span><small id="imuStatus"> · 等待</small></div></div>
+  <div class="value"><label>通信</label><div class="num"><span id="good">0</span><small> 正常</small></div><div style="font:12px var(--mono);color:var(--red);margin-top:5px"><span id="bad">0</span> 错帧 / <span id="timeout">0</span> 超时 / <span id="retry">0</span> 重试</div></div>
+</section>
+
+<div id="log" class="log"></div>
+<p class="hint">双击本文件，用桌面版 Chrome 或 Edge 打开 → 选择总线协议 → 点击 <code>连接串口</code> 并选择对应串口。浏览器要求由用户点击按钮授权串口，这是 Web Serial 的安全限制。页面全部在本地运行，不上传任何数据。</p>
+</div>
+<script>
+'use strict';
+/* ---------------------------------------------------------------------------
+ * IMU-DXL 舵机总线调试台
+ *
+ * 设备在单线 TTL 舵机总线上表现为 ID 200 的只读虚拟舵机，兼容两种协议，
+ * 由总线上的第一个合法帧自动识别：
+ *   飞特 SCS/STS       : FF FF ID LEN ... CHECKSUM，姿态块 地址 56 / 15 字节
+ *   DYNAMIXEL 2.0      : FF FF FD 00 ID LEN_L LEN_H ... CRC_L CRC_H，
+ *                        姿态块 地址 124 / 12 字节，状态字节 地址 143 / 1 字节
+ *
+ * 12 字节姿态块布局（两种协议一致，多字节均为小端序）：
+ *   0..5   int16 x3      陀螺仪 X/Y/Z，原始值 ÷ 16.4 = °/s
+ *   6..11  binary16 x3   四元数 X/Y/Z，W 由主机按 W = sqrt(max(0,1-x²-y²-z²)) 恢复
+ * ------------------------------------------------------------------------- */
+
+const ID = 200;              // 设备 ID
+const BAUD = 1000000;        // 1 Mbps, 8N1
+const FEETECH_ADDR = 56, FEETECH_LEN = 15;
+const DXL_ADDR = 124, DXL_LEN = 12;
+const DXL_STATUS_ADDR = 143, DXL_STATUS_LEN = 1;
+
+const $ = id => document.getElementById(id);
+const ui = { status: $('status'), connect: $('connect'), rate: $('rate'), proto: $('proto'), log: $('log'), busline: $('busline') };
+
+const state = {
+  port: null, reader: null, writer: null, connected: false, closing: false,
+  protocol: 'feetech', rx: [], pending: null, good: 0, bad: 0, timeouts: 0, retries: 0,
+  lastRx: 0, lastStatusPoll: 0, windowFrames: 0, windowAt: performance.now(),
+  pose: { r: 0, p: 0, y: 0, q: [1, 0, 0, 0] }, history: []
+};
+
+/* ---------------------------------- 通用工具 ------------------------------ */
+
+function log(s, kind = '') {
+  const d = document.createElement('div');
+  d.textContent = `${new Date().toLocaleTimeString()}  ${s}`;
+  if (kind === 'bad') d.style.color = '#ff9c9c';
+  if (kind === 'ok') d.style.color = '#86efac';
+  if (kind === 'dim') d.style.color = '#7d8ea3';
+  ui.log.appendChild(d);
+  ui.log.scrollTop = ui.log.scrollHeight;
+  while (ui.log.children.length > 120) ui.log.firstChild.remove();
+}
+function setStatus(text, cls = '') { ui.status.textContent = text; ui.status.className = 'status ' + cls; }
+function hex(bytes) { return Array.from(bytes, b => b.toString(16).padStart(2, '0').toUpperCase()).join(' '); }
+function i16(a, i) { const v = a[i] | (a[i + 1] << 8); return v & 0x8000 ? v - 0x10000 : v; }
+
+/** IEEE-754 binary16 -> Number */
+function half(h) {
+  const s = (h & 0x8000) ? -1 : 1, e = (h >> 10) & 31, f = h & 1023;
+  if (e === 0) return s * Math.pow(2, -14) * (f / 1024);
+  if (e === 31) return f ? NaN : s * Infinity;
+  return s * Math.pow(2, e - 15) * (1 + f / 1024);
+}
+
+function quatEuler(w, x, y, z) {
+  const r = Math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y));
+  const sp = Math.max(-1, Math.min(1, 2 * (w * y - z * x)));
+  const p = Math.asin(sp);
+  const yy = Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z));
+  return [r * 180 / Math.PI, p * 180 / Math.PI, yy * 180 / Math.PI];
+}
+
+/* ------------------------------ 飞特 SCS/STS ------------------------------ */
+
+/** 校验：从 ID 到最后一个参数/数据字节的 8 位累加和按位取反 */
+function feetechChecksum(a, start, end) { let s = 0; for (let i = start; i < end; i++) s = (s + a[i]) & 255; return (~s) & 255; }
+
+const FEETECH = {
+  ping: () => Uint8Array.from([0xFF, 0xFF, ID, 0x02, 0x01, feetechChecksum([0, 0, ID, 0x02, 0x01], 2, 5)]),
+  /** READ 指令：地址与长度各占 1 字节，LEN 覆盖 指令 + 地址 + 长度 + 校验 = 4 */
+  read: (addr, len) => {
+    const f = Uint8Array.from([0xFF, 0xFF, ID, 0x04, 0x02, addr & 0xFF, len & 0xFF, 0]);
+    f[7] = feetechChecksum(f, 2, 7);
+    return f;
+  }
+};
+
+/* ---------------------------- DYNAMIXEL Protocol 2.0 --------------------- */
+
+/** CRC-16：多项式 0x8005，初值 0x0000，不反射；覆盖范围含 4 字节帧头，不含 CRC 本身 */
+const CRC_TABLE = (() => {
+  const t = new Uint16Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i << 8;
+    for (let j = 0; j < 8; j++) c = (c & 0x8000) ? (((c << 1) ^ 0x8005) & 0xFFFF) : ((c << 1) & 0xFFFF);
+    t[i] = c;
+  }
+  return t;
+})();
+function crc16(a, start, end) {
+  let c = 0;
+  for (let i = start; i < end; i++) c = (((c << 8) & 0xFFFF) ^ CRC_TABLE[((c >> 8) ^ a[i]) & 0xFF]) & 0xFFFF;
+  return c;
+}
+
+/** 字节填充：指令/错误/参数区出现 FF FF FD 时，在其后插入一个 FD */
+function dxlStuff(body) {
+  const out = [];
+  for (const b of body) {
+    out.push(b);
+    const n = out.length;
+    if (n >= 3 && out[n - 3] === 0xFF && out[n - 2] === 0xFF && out[n - 1] === 0xFD) out.push(0xFD);
+  }
+  return out;
+}
+/** 去填充：把 FF FF FD FD 还原为 FF FF FD（填充的逆操作） */
+function dxlUnstuff(body) {
+  const out = [];
+  for (let i = 0; i < body.length; i++) {
+    const b = body[i];
+    const n = out.length;
+    if (b === 0xFD && n >= 3 && out[n - 1] === 0xFD && out[n - 2] === 0xFF && out[n - 3] === 0xFF) continue;
+    out.push(b);
+  }
+  return out;
+}
+
+/** 组装请求帧：ID 取该设备 ID（0xFE 为广播） */
+function dxlPacket(id, instruction, params) {
+  const body = dxlStuff([instruction, ...params]);
+  const total = 4 + 1 + 2 + body.length + 2;
+  const f = new Uint8Array(total);
+  f[0] = 0xFF; f[1] = 0xFF; f[2] = 0xFD; f[3] = 0x00; f[4] = id;
+  f[5] = (body.length + 2) & 0xFF; f[6] = ((body.length + 2) >> 8) & 0xFF;
+  f.set(body, 7);
+  const crc = crc16(f, 0, total - 2);
+  f[total - 2] = crc & 0xFF; f[total - 1] = (crc >> 8) & 0xFF;
+  return f;
+}
+
+const DXL = {
+  ping: () => dxlPacket(ID, 0x01, []),
+  read: (addr, len) => dxlPacket(ID, 0x02, [addr & 0xFF, (addr >> 8) & 0xFF, len & 0xFF, (len >> 8) & 0xFF])
+};
+
+/* -------------------------------- 协议表 ---------------------------------- */
+
+const PROTOCOLS = {
+  feetech: {
+    label: '飞特 SCS/STS',
+    bus: `ID ${ID} · 1 Mbps 8N1 · READ ${FEETECH_ADDR}/${FEETECH_LEN}`,
+    ping: FEETECH.ping,
+    pose: () => FEETECH.read(FEETECH_ADDR, FEETECH_LEN),
+    status: null,
+    parse: parseFeetech
+  },
+  dxl: {
+    label: 'DYNAMIXEL 2.0',
+    bus: `ID ${ID} · 1 Mbps 8N1 · READ ${DXL_ADDR}/${DXL_LEN} · CRC16`,
+    ping: DXL.ping,
+    pose: () => DXL.read(DXL_ADDR, DXL_LEN),
+    status: () => DXL.read(DXL_STATUS_ADDR, DXL_STATUS_LEN),
+    parse: parseDxl
+  }
+};
+const proto = () => PROTOCOLS[state.protocol];
+
+/* ------------------------------- 接收解析 --------------------------------- */
+
+function consume(chunk) {
+  for (const b of chunk) state.rx.push(b);
+  if (state.rx.length > 4096) state.rx.splice(0, state.rx.length - 2048);   // 防御性上限
+  for (;;) {
+    const consumed = proto().parse();
+    if (!consumed) break;
+  }
+  updateCounters();
+}
+
+/** 飞特：FF FF ID LEN INSTRUCTION/ERROR DATA... CHECKSUM，总长 LEN + 4 */
+function parseFeetech() {
+  const rx = state.rx;
+  let h = -1;
+  for (let i = 0; i + 1 < rx.length; i++) if (rx[i] === 0xFF && rx[i + 1] === 0xFF) { h = i; break; }
+  if (h < 0) { rx.length = rx[rx.length - 1] === 0xFF ? 1 : 0; return false; }
+  if (h) rx.splice(0, h);
+  if (rx.length < 4) return false;
+
+  const total = rx[3] + 4;
+  if (total < 6 || total > 140) { rx.shift(); state.bad++; return true; }
+  if (rx.length < total) return false;
+
+  const f = rx.slice(0, total);
+  if (feetechChecksum(f, 2, total - 1) !== f[total - 1]) { rx.shift(); state.bad++; return true; }
+  rx.splice(0, total);
+
+  if (f[2] !== ID) return true;
+  const error = f[4];
+  const data = f.slice(5, total - 1);
+  if (error !== 0) log(`状态帧错误字节 = ${error}`, 'bad');
+  if (data.length === 0) { state.lastRx = performance.now(); settlePending(); onPing(); }
+  else if (data.length >= 15) onPose(data);            // 12 字节姿态 + 序号 + 状态 + 保留
+  return true;
+}
+
+/** DYNAMIXEL 2.0：FF FF FD 00 ID LEN_L LEN_H 55 ERROR DATA... CRC_L CRC_H，总长 7 + LEN */
+function parseDxl() {
+  const rx = state.rx;
+  let h = -1;
+  for (let i = 0; i + 3 < rx.length; i++) {
+    if (rx[i] === 0xFF && rx[i + 1] === 0xFF && rx[i + 2] === 0xFD && rx[i + 3] === 0x00) { h = i; break; }
+  }
+  if (h < 0) {
+    // 保留末尾可能构成帧头前缀的字节
+    let keep = 0;
+    for (let k = Math.min(3, rx.length); k > 0; k--) {
+      const tail = rx.slice(rx.length - k);
+      if ([0xFF, 0xFF, 0xFD, 0x00].slice(0, k).every((v, j) => v === tail[j])) { keep = k; break; }
+    }
+    rx.splice(0, rx.length - keep);
+    return false;
+  }
+  if (h) rx.splice(0, h);
+  if (rx.length < 7) return false;
+
+  const total = 7 + rx[5] + (rx[6] << 8);
+  if (total < 10 || total > 256) { rx.shift(); state.bad++; return true; }
+  if (rx.length < total) return false;
+
+  const f = rx.slice(0, total);
+  const want = f[total - 2] | (f[total - 1] << 8);
+  if (crc16(f, 0, total - 2) !== want) { rx.shift(); state.bad++; return true; }
+  rx.splice(0, total);
+
+  if (f[4] !== ID) return true;
+  const body = dxlUnstuff(f.slice(7, total - 2));
+  if (body.length < 2 || body[0] !== 0x55) { state.bad++; return true; }
+  const data = body.slice(2);
+  state.lastRx = performance.now();
+  settlePending();
+
+  if (data.length === 3) onPing(data);
+  else if (data.length === 12) onPose(data);
+  else if (data.length === 1) onStatus(data[0]);
+  return true;
+}
+
+function settlePending() {
+  if (!state.pending) return;
+  const p = state.pending;
+  state.pending = null;
+  clearTimeout(p.timer);
+  p.resolve(true);
+}
+
+function onPing(data) {
+  if (data) {
+    const model = data[0] | (data[1] << 8);
+    log(`PING 应答：型号 ${model}（0x${model.toString(16).padStart(4, '0')}），固件版本 ${data[2]}`, 'ok');
+  } else {
+    log('PING 应答正常', 'ok');
+  }
+}
+
+function onStatus(byte) {
+  $('imuStatus').textContent = (byte & 1) ? ' · ESKF 初始化中' : ' · ESKF 正常';
+}
+
+function onPose(d) {
+  const gx = i16(d, 0) / 16.4, gy = i16(d, 2) / 16.4, gz = i16(d, 4) / 16.4;
+  let x = half(d[6] | (d[7] << 8)), y = half(d[8] | (d[9] << 8)), z = half(d[10] | (d[11] << 8));
+  let w = Math.sqrt(Math.max(0, 1 - x * x - y * y - z * z));
+  const n = Math.hypot(w, x, y, z) || 1;
+  w /= n; x /= n; y /= n; z /= n;
+
+  const [r, p, yy] = quatEuler(w, x, y, z);
+  state.pose = { r, p, y: yy, q: [w, x, y, z] };
+  state.good++; state.windowFrames++; state.lastRx = performance.now();
+
+  // 飞特 15 字节块还带采样序号与状态字节；DYNAMIXEL 12 字节块没有，状态另读地址 143
+  if (d.length >= 15) {
+    $('seq').textContent = d[12];
+    onStatus(d[13]);
+  } else if (state.protocol === 'dxl') {
+    $('seq').textContent = '—';
+  }
+
+  state.history.push({ t: performance.now(), r, p, y: yy });
+  const cut = performance.now() - 10000;
+  while (state.history.length && state.history[0].t < cut) state.history.shift();
+
+  $('roll').textContent = r.toFixed(2);
+  $('pitch').textContent = p.toFixed(2);
+  $('yaw').textContent = yy.toFixed(2);
+  $('gx').textContent = gx.toFixed(2);
+  $('gy').textContent = gy.toFixed(2);
+  $('gz').textContent = gz.toFixed(2);
+  $('quat').textContent = [w, x, y, z].map(v => v.toFixed(4)).join(', ');
+  $('heading').textContent = 'N ' + String(Math.round((yy + 360) % 360)).padStart(3, '0') + '°';
+}
+
+function updateCounters() {
+  $('good').textContent = state.good;
+  $('bad').textContent = state.bad;
+  $('timeout').textContent = state.timeouts;
+  $('retry').textContent = state.retries;
+}
+
+/* ------------------------------ 串口收发循环 ------------------------------ */
+
+async function readLoop() {
+  try {
+    while (state.connected && state.port.readable) {
+      state.reader = state.port.readable.getReader();
+      try {
+        while (state.connected) {
+          const { value, done } = await state.reader.read();
+          if (done) break;
+          if (value) consume(value);
+        }
+      } finally {
+        state.reader.releaseLock();
+        state.reader = null;
+      }
+    }
+  } catch (e) {
+    if (!state.closing) { log('读取失败：' + e.message, 'bad'); setStatus('读取失败', 'bad'); await disconnect(); }
+  }
+}
+
+/** 单次请求：发出后等到一帧有效应答，超时默认 60 ms */
+function request(frame, timeoutMs = 60) {
+  return new Promise(resolve => {
+    const timer = setTimeout(() => {
+      if (state.pending && state.pending.timer === timer) state.pending = null;
+      resolve(false);
+    }, timeoutMs);
+    state.pending = { resolve, timer };
+    state.writer.write(frame).catch(e => {
+      if (state.pending && state.pending.timer === timer) { clearTimeout(state.pending.timer); state.pending = null; }
+      log('发送失败：' + e.message, 'bad');
+      resolve(false);
+    });
+  });
+}
+
+async function pollLoop() {
+  while (state.connected) {
+    const started = performance.now();
+    try {
+      // DYNAMIXEL 姿态块不含状态字节，约每秒单独读一次地址 143
+      if (state.protocol === 'dxl' && performance.now() - state.lastStatusPoll > 1000) {
+        state.lastStatusPoll = performance.now();
+        await request(proto().status());
+      }
+      let ok = await request(proto().pose());
+      if (!ok && state.connected) { state.retries++; ok = await request(proto().pose()); }
+      if (!ok && state.connected) state.timeouts++;
+      updateCounters();
+      const wait = Number(ui.rate.value) - (performance.now() - started);
+      if (wait > 0) await new Promise(r => setTimeout(r, wait));
+    } catch (e) {
+      if (!state.closing) { log('轮询异常：' + e.message, 'bad'); await disconnect(); }
+      break;
+    }
+  }
+}
+
+async function connect() {
+  if (!('serial' in navigator)) {
+    setStatus('浏览器不支持 Web Serial', 'bad');
+    log('请使用桌面版 Chrome 或 Edge 打开本页面', 'bad');
+    return;
+  }
+  state.protocol = ui.proto.value;
+  try {
+    state.port = await navigator.serial.requestPort();
+    await state.port.open({ baudRate: BAUD, dataBits: 8, stopBits: 1, parity: 'none', flowControl: 'none' });
+    state.writer = state.port.writable.getWriter();
+    state.connected = true; state.closing = false; state.lastRx = performance.now();
+    state.lastStatusPoll = performance.now();
+    state.rx = []; state.good = state.bad = state.timeouts = state.retries = 0;
+    updateCounters();
+    ui.connect.textContent = '断开串口';
+    ui.connect.classList.add('disconnect');
+    ui.proto.disabled = true;
+    setStatus('已连接 · ' + proto().label, 'live');
+    ui.busline.textContent = proto().bus;
+    log(`串口已打开 @ 1 Mbps 8N1，协议：${proto().label}`, 'ok');
+
+    readLoop();
+    const ping = proto().ping();
+    log('TX  PING  ' + hex(ping));
+    if (!await request(ping, 120)) log('PING 无应答：检查线序、共地、波特率与设备 ID', 'bad');
+    pollLoop();
+  } catch (e) {
+    if (e.name !== 'NotFoundError') { setStatus('连接失败', 'bad'); log('连接失败：' + e.message, 'bad'); }
+  }
+}
+
+async function disconnect() {
+  if (!state.port) return;
+  state.closing = true; state.connected = false;
+  if (state.pending) { clearTimeout(state.pending.timer); state.pending.resolve(false); state.pending = null; }
+  try { if (state.reader) await state.reader.cancel(); } catch (e) { /* 已关闭 */ }
+  try {
+    if (state.writer) { state.writer.releaseLock(); state.writer = null; }
+    await state.port.close();
+  } catch (e) { /* 已关闭 */ }
+  state.port = null;
+  ui.connect.textContent = '连接串口';
+  ui.connect.classList.remove('disconnect');
+  ui.proto.disabled = false;
+  setStatus('未连接');
+  log('串口已断开');
+}
+
+ui.connect.onclick = () => state.connected ? disconnect() : connect();
+ui.proto.onchange = () => {
+  state.protocol = ui.proto.value;
+  ui.busline.textContent = proto().bus;
+  $('seq').textContent = '—';
+};
+navigator.serial?.addEventListener('disconnect', () => disconnect());
+
+/* -------------------------------- 绘图 ------------------------------------ */
+
+function fit(c) {
+  const d = devicePixelRatio || 1, r = c.getBoundingClientRect();
+  const w = Math.max(1, Math.floor(r.width * d)), h = Math.max(1, Math.floor(r.height * d));
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  return [c.getContext('2d'), w, h, d];
+}
+
+function drawScene() {
+  const c = $('scene'), [g, w, h] = fit(c);
+  g.clearRect(0, 0, w, h);
+  const q = state.pose.q;
+  const rot = v => {
+    const [W, X, Y, Z] = q, [a, b, cc] = v;
+    return [
+      (1 - 2 * (Y * Y + Z * Z)) * a + 2 * (X * Y - Z * W) * b + 2 * (X * Z + Y * W) * cc,
+      2 * (X * Y + Z * W) * a + (1 - 2 * (X * X + Z * Z)) * b + 2 * (Y * Z - X * W) * cc,
+      2 * (X * Z - Y * W) * a + 2 * (Y * Z + X * W) * b + (1 - 2 * (X * X + Y * Y)) * cc
+    ];
+  };
+  const scale = Math.min(w, h) * .24, ox = w * .5, oy = h * .54;
+  const proj = v => [ox + (v[0] - v[1]) * .76 * scale, oy + (v[0] + v[1]) * .25 * scale - v[2] * scale];
+
+  g.strokeStyle = '#dbe3ec'; g.lineWidth = 1;
+  for (let i = -3; i <= 3; i++) {
+    let a = proj([i / 3, -1, 0]), b = proj([i / 3, 1, 0]);
+    g.beginPath(); g.moveTo(...a); g.lineTo(...b); g.stroke();
+    a = proj([-1, i / 3, 0]); b = proj([1, i / 3, 0]);
+    g.beginPath(); g.moveTo(...a); g.lineTo(...b); g.stroke();
+  }
+  const pts = [[-1.15, -.72, -.16], [1.15, -.72, -.16], [1.15, .72, -.16], [-1.15, .72, -.16],
+               [-1.15, -.72, .16], [1.15, -.72, .16], [1.15, .72, .16], [-1.15, .72, .16]].map(v => proj(rot(v)));
+  const faces = [[0, 1, 2, 3], [4, 5, 6, 7], [0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7]];
+  for (const f of faces) {
+    g.beginPath(); g.moveTo(...pts[f[0]]);
+    for (let i = 1; i < f.length; i++) g.lineTo(...pts[f[i]]);
+    g.closePath(); g.fillStyle = 'rgba(8,145,178,.12)'; g.fill();
+    g.strokeStyle = '#0891b2'; g.lineWidth = 2; g.stroke();
+  }
+  const o = proj([0, 0, 0]);
+  [['#0891b2', [1.65, 0, 0]], ['#2563eb', [0, 1.65, 0]], ['#e11d48', [0, 0, 1.65]]].forEach(([col, v]) => {
+    const p = proj(rot(v));
+    g.strokeStyle = col; g.lineWidth = 3;
+    g.beginPath(); g.moveTo(...o); g.lineTo(...p); g.stroke();
+  });
+}
+
+function drawChart() {
+  const c = $('chart'), [g, w, h, d] = fit(c);
+  g.clearRect(0, 0, w, h);
+  const pad = 38 * d;
+  g.strokeStyle = '#e8edf3'; g.lineWidth = 1;
+  g.font = `${11 * d}px ${getComputedStyle(document.body).fontFamily}`;
+  g.fillStyle = '#8a96a8';
+  for (let deg = -180; deg <= 180; deg += 60) {
+    const y = pad + (180 - deg) / 360 * (h - 2 * pad);
+    g.beginPath(); g.moveTo(pad, y); g.lineTo(w - pad, y); g.stroke();
+    g.fillText(deg + '°', 4 * d, y + 4 * d);
+  }
+  if (state.history.length < 2) return;
+  const now = performance.now();
+  for (const [k, col] of [['r', '#0891b2'], ['p', '#2563eb'], ['y', '#e11d48']]) {
+    g.strokeStyle = col; g.lineWidth = 2 * d;
+    g.beginPath();
+    state.history.forEach((v, i) => {
+      const x = pad + (1 - (now - v.t) / 10000) * (w - 2 * pad);
+      const y = pad + (180 - v[k]) / 360 * (h - 2 * pad);
+      i ? g.lineTo(x, y) : g.moveTo(x, y);
+    });
+    g.stroke();
+  }
+}
+
+function animate() {
+  drawScene(); drawChart();
+  const now = performance.now();
+  if (now - state.windowAt >= 1000) {
+    $('fps').textContent = (state.windowFrames * 1000 / (now - state.windowAt)).toFixed(1) + ' 帧/秒';
+    state.windowFrames = 0; state.windowAt = now;
+    if (state.connected && now - state.lastRx > 1500) setStatus('已连接 · 无响应', 'bad');
+    else if (state.connected) setStatus('已连接 · ' + proto().label, 'live');
+  }
+  requestAnimationFrame(animate);
+}
+
+if (!('serial' in navigator)) {
+  setStatus('浏览器不支持 Web Serial', 'bad');
+  ui.connect.disabled = true;
+  log('请使用桌面版 Chrome 或 Edge 打开本页面', 'bad');
+} else {
+  log('就绪：选择总线协议后点击「连接串口」', 'dim');
+  log(`飞特 READ ${FEETECH_ADDR}/${FEETECH_LEN}　·　DYNAMIXEL READ ${DXL_ADDR}/${DXL_LEN}（CRC16）`, 'dim');
+}
+ui.busline.textContent = proto().bus;
+animate();
+</script>
+</body></html>
