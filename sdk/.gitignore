@@ -1,0 +1,4 @@
+*.exe
+*.o
+__pycache__/
+target/

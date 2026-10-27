@@ -1,0 +1,20 @@
+[package]
+name = "imu-dxl"
+version = "0.1.0"
+edition = "2021"
+description = "IMU-DXL servo-bus reader: Feetech SCS/STS and DYNAMIXEL Protocol 2.0"
+license = "MIT"
+
+[features]
+default = ["serial"]
+serial = ["dep:serialport"]
+
+[dependencies]
+# default-features off: the crate then has no system dependency on Linux
+# (its default "libudev" feature is only needed for port enumeration, and this
+# SDK opens a port by name). Opening COMx / /dev/ttyUSB0 works on both OSes.
+serialport = { version = "4", optional = true, default-features = false }
+
+[[bin]]
+name = "read_imu"
+path = "src/main.rs"

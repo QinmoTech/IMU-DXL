@@ -1,0 +1,74 @@
+name: SDK
+
+on:
+  push:
+    paths:
+      - 'sdk/**'
+      - '.github/workflows/sdk.yml'
+  pull_request:
+    paths:
+      - 'sdk/**'
+
+jobs:
+  c-and-python:
+    name: C + Python (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Python unit tests
+        run: python sdk/python/test_imu_link.py
+
+      - name: Python replay matches the golden file
+        shell: bash
+        run: |
+          python sdk/python/read_imu.py --replay sdk/testdata/capture.bin > py.ndjson
+          python -c "import sys; a=open('sdk/testdata/expected.ndjson').read().split(); b=open('py.ndjson').read().split(); print('python replay OK' if a==b else 'MISMATCH'); sys.exit(0 if a==b else 1)"
+
+      - name: C build and tests (Linux)
+        if: runner.os == 'Linux'
+        run: make -C sdk/c clean all test
+
+      # windows-latest has no make/gcc on PATH by default; MSYS2's mingw64 does.
+      - name: Set up MSYS2
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          install: mingw-w64-x86_64-gcc make
+
+      - name: C build and tests (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: make -C sdk/c clean all test
+
+      - name: C replay matches the golden file
+        shell: bash
+        run: |
+          ./sdk/c/read_imu --replay sdk/testdata/capture.bin > c.ndjson
+          python -c "import sys; a=open('sdk/testdata/expected.ndjson').read().split(); b=open('c.ndjson').read().split(); print('C replay OK' if a==b else 'MISMATCH'); sys.exit(0 if a==b else 1)"
+
+      # The live path (termios, probe, polling) only has a PTY on POSIX.
+      - name: Live serial path over a PTY (Linux)
+        if: runner.os == 'Linux'
+        run: python sdk/testdata/live_linux.py --c-binary sdk/c/read_imu
+
+  rust:
+    name: Rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Core + replay (no serialport dependency)
+        run: cargo test --manifest-path sdk/rust/Cargo.toml --no-default-features
+
+      - name: With the serialport feature
+        run: cargo test --manifest-path sdk/rust/Cargo.toml
