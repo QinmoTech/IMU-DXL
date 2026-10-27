@@ -3,6 +3,13 @@
     \brief Serial port, Windows (Win32) and Linux (termios).
 */
 
+/* glibc hides cfmakeraw(), the B1000000 constant and select()'s pieces behind
+   feature macros; ask for them explicitly so the build does not depend on the
+   compiler default (see also the gnu99 note in the Makefile). */
+#if !defined(_WIN32) && !defined(_DEFAULT_SOURCE)
+#define _DEFAULT_SOURCE 1
+#endif
+
 #include "imu_port.h"
 
 #include <stdio.h>
@@ -117,6 +124,7 @@ void imu_port_sleep_ms(int ms)
 #include <time.h>
 #include <unistd.h>
 #include <sys/select.h>
+#include <sys/types.h>
 
 int imu_port_open(imu_port_t *port, const char *name)
 {

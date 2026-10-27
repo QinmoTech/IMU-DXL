@@ -2,7 +2,10 @@
 ifeq ($(origin CC),default)
 CC := gcc
 endif
-CFLAGS  ?= -O2 -Wall -Wextra -std=c99
+# gnu99, not c99: strict ISO mode makes glibc hide the POSIX declarations the
+# termios branch needs (fd_set/select, cfmakeraw, nanosleep, ...). MSVC/MinGW
+# do not care, so one flag serves both platforms.
+CFLAGS  ?= -O2 -Wall -Wextra -std=gnu99
 LDLIBS  ?= -lm
 
 ifeq ($(OS),Windows_NT)
