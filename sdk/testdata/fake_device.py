@@ -125,9 +125,16 @@ def main() -> int:
         ready, _, _ = select.select([master], [], [], 0.5)
         if not ready:
             continue
-        chunk = os.read(master, 256)
+        try:
+            chunk = os.read(master, 256)
+        except OSError:
+            # the reader closed its end (or a slave is not open yet): keep serving,
+            # a new slave can attach later and the buffer is meaningless now
+            buf = b""
+            continue
         if not chunk:
-            break
+            buf = b""
+            continue
         buf += chunk
         while True:
             reply, consumed = take(buf)
@@ -135,7 +142,10 @@ def main() -> int:
                 break
             buf = buf[consumed:]
             if reply:
-                os.write(master, reply)
+                try:
+                    os.write(master, reply)
+                except OSError:
+                    break
 
 
 if __name__ == "__main__":
