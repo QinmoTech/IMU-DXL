@@ -16,6 +16,7 @@ and the poll loop; it needs a POSIX pty, so Linux/macOS only.
 from __future__ import annotations
 
 import argparse
+import os
 import pathlib
 import subprocess
 import sys
@@ -23,6 +24,15 @@ import sys
 HERE = pathlib.Path(__file__).resolve().parent
 PYTHON_READER = HERE.parent / "python" / "read_imu.py"
 EXPECTED = (HERE / "expected.ndjson").read_text().splitlines()
+
+
+def annotate(message: str) -> None:
+    """Surface a failure in the check-run annotations, where it is visible
+    without authenticated access to the job log."""
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        return
+    escaped = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    print(f"::error::{escaped[:900]}", flush=True)
 
 
 def start_device(protocol: str):
@@ -42,11 +52,18 @@ def check_reader(name: str, command: list[str], port: str, protocol: str, want: 
         )
     except subprocess.TimeoutExpired:
         print(f"  [FAIL] {protocol} via {name}: reader timed out")
+        annotate(f"{protocol}/{name}: reader timed out after 30 s on {port}")
         return False
     lines = [line for line in result.stdout.splitlines() if line.startswith("{")]
     good = lines == [want]
     detail = lines[0] if lines else (result.stderr.strip() or f"exit {result.returncode}")
     print(f"  [{'PASS' if good else 'FAIL'}] {protocol} via {name} -> {detail}")
+    if not good:
+        annotate(
+            f"{protocol}/{name} exit={result.returncode} port={port} "
+            f"stdout={lines!r} stderr={result.stderr.strip()[:600]!r} "
+            f"want={want!r}"
+        )
     return good
 
 
