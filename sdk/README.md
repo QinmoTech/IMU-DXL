@@ -21,7 +21,7 @@ C、Python、Rust 三种实现输出**同一种 JSON 行**，同一份抓包解�
 | `proto` | 这一帧来自哪种协议：`feetech` / `dxl` |
 | `seq` | 飞特的采样序号；DYNAMIXEL 没有，固定 `null` |
 | `status` | 飞特块内状态字节，或 DYNAMIXEL 地址 143；未知时 `null` |
-| `gyro_dps` | 三轴角速度，原始计数 ÷ 16.4 |
+| `gyro_dps` | 三轴角速度，原始计数 ÷ 16.4（量程 ±2000 °/s，超出饱和不回绕） |
 | `quat_wxyz` | 四元数，W 由 `sqrt(max(0,1-x²-y²-z²))` 恢复并归一化 |
 | `euler_deg` | ZYX 欧拉角，单位度 |
 

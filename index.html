@@ -292,7 +292,9 @@ function parseFeetech() {
   const data = f.slice(5, total - 1);
   if (error !== 0) log(`状态帧错误字节 = ${error}`, 'bad');
   if (data.length === 0) { state.lastRx = performance.now(); settlePending(); onPing(); }
-  else if (data.length >= 15) onPose(data);            // 12 字节姿态 + 序号 + 状态 + 保留
+  /* 姿态帧同样算一次成功应答，必须 settle，否则 request() 只能等到超时：
+     每次轮询都会白等 60 ms、再多发一帧，重试/超时计数虚增，实际帧率减半。 */
+  else if (data.length >= 15) { state.lastRx = performance.now(); settlePending(); onPose(data); }
   return true;
 }
 
